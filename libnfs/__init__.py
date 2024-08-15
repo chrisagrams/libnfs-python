@@ -1,4 +1,5 @@
 #   Copyright (C) 2014 by Ronnie Sahlberg <ronniesahlberg@gmail.com>
+#   Copyright (C) 2024 by Chris Grams <chrisagrams@gmail.com>
 #
 #   This program is free software; you can redistribute it and/or modify
 #   it under the terms of the GNU Lesser General Public License as published by
@@ -19,27 +20,29 @@ import stat
 import sys
 from .libnfs import *
 
-def _stat_to_dict(stat):
-        return {'dev': stat.nfs_dev,
-                'ino': stat.nfs_ino,
-                'mode': stat.nfs_mode,
-                'nlink': stat.nfs_nlink,
-                'uid': stat.nfs_uid,
-                'gid': stat.nfs_gid,
-                'rdev': stat.nfs_rdev,
-                'size': stat.nfs_size,
-                'blksize': stat.nfs_blksize,
-                'blocks': stat.nfs_blocks,
-                'atime': {'sec':  stat.nfs_atime,
-                          'nsec': stat.nfs_atime_nsec},
-                'ctime': {'sec':  stat.nfs_ctime,
-                          'nsec': stat.nfs_ctime_nsec},
-                'mtime': {'sec':  stat.nfs_mtime,
-                          'nsec': stat.nfs_mtime_nsec}
-                }
 
+def __ret_to_stat_result__(stat):
+    return os.stat_result((
+        stat.nfs_mode,       # st_mode
+        stat.nfs_ino,        # st_ino
+        stat.nfs_dev,        # st_dev
+        stat.nfs_nlink,      # st_nlink
+        stat.nfs_uid,        # st_uid
+        stat.nfs_gid,        # st_gid
+        stat.nfs_size,       # st_size
+        stat.nfs_atime,      # st_atime
+        stat.nfs_mtime,      # st_mtime
+        stat.nfs_ctime,      # st_ctime
+        stat.nfs_atime_nsec, # st_atime_ns
+        stat.nfs_ctime_nsec, # st_ctime_ns
+        stat.nfs_mtime_nsec, # st_mtime_ns
+        stat.nfs_blocks,     # st_blocks
+        stat.nfs_blksize,    # st_blksize
+        stat.nfs_blocks,     # st_blocks
+        stat.nfs_rdev        # st_rdev
+    ))
 
-class NFSFH(object):
+class NFSFileHandle(object):
     def __init__(self, nfs, path, mode='r', codec=None):
 
         self._nfs = nfs
@@ -84,9 +87,15 @@ class NFSFH(object):
         self._closed = False
         self._need_flush = False
         self._writing = True if _mode & (os.O_RDWR|os.O_WRONLY) else False
-
+    
     def __del__(self):
         pass
+
+    def __enter__(self):
+         return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+         self.close()
 
     def close(self):
         if self._need_flush:
@@ -130,7 +139,7 @@ class NFSFH(object):
     def fstat(self):
         _stat = nfs_stat_64()
         nfs_fstat64(self._nfs, self._nfsfh, _stat)
-        return _stat_to_dict(_stat)
+        return __ret_to_stat_result__(_stat)
 
     def tell(self):
         _pos = new_uint64_t_ptr()
@@ -183,25 +192,38 @@ class NFS(object):
             raise IOError(nfs_get_error(self._nfs))
 
     def __del__(self):
-        nfs_destroy_url(self._url)
-        nfs_destroy_context(self._nfs)
+        self._cleanup()
+
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+         self._cleanup()
+
+    def _cleanup(self):
+        if self._url:
+            nfs_destroy_url(self._url)
+            self._url = None
+        if self._nfs:
+            nfs_destroy_context(self._nfs)
+            self._nfs = None
 
     def open(self, path, mode='r', codec=None):
-        return NFSFH(self._nfs, path, mode=mode, codec=codec)
+        return NFSFileHandle(self._nfs, path, mode=mode, codec=codec)
 
     def stat(self, path):
         _stat = nfs_stat_64()
         ret = nfs_stat64(self._nfs, path, _stat)
         if ret == -errno.ENOENT:
                 raise IOError(errno.ENOENT, 'No such file or directory');
-        return _stat_to_dict(_stat)
+        return __ret_to_stat_result__(_stat)
 
     def lstat(self, path):
         _stat = nfs_stat_64()
         ret = nfs_lstat64(self._nfs, path, _stat)
         if ret == -errno.ENOENT:
                 raise IOError(errno.ENOENT, 'No such file or directory');
-        return _stat_to_dict(_stat)
+        return __ret_to_stat_result__(_stat)
 
     def unlink(self, path):
         ret = nfs_unlink(self._nfs, path)
@@ -230,11 +252,12 @@ class NFS(object):
 
         ret = []
         while True:
-                de = nfs_readdir(self._nfs, d)
-                if de == None:
-                        break
-
-                ret.append(de.name)
+                entry = nfs_readdir(self._nfs, d)
+                if entry == None:
+                    break
+                # os.listdir does not include '.' nor '..', make this behave the same
+                if entry.name != '.' and entry.name != '..':
+                    ret.append(entry.name)
         return ret
 
     def makedirs(self, path):
@@ -242,29 +265,6 @@ class NFS(object):
         for p in path.split(os.path.sep):
             npath = os.path.join(npath, p)
             self.mkdir(npath)
-
-    def rawstat(self, path):
-        _stat = nfs_stat_64()
-        ret = nfs_stat64(self._nfs, path, _stat)
-        if ret == -errno.ENOENT:
-                raise IOError(errno.ENOENT, 'No such file or directory')
-        return _stat
-
-    def isfile(self, path):
-        """Test whether a path is a regular file"""
-        try:
-            st = self.rawstat(path)
-        except IOError:
-            return False
-        return stat.S_ISREG(st.nfs_mode)
-
-    def isdir(self, s):
-        """Return true if the pathname refers to an existing directory."""
-        try:
-            st = self.rawstat(s)
-        except IOError:
-            return False
-        return stat.S_ISDIR(st.nfs_mode)
 
     def rename(self, src, dst):
         """Rename file"""
@@ -279,5 +279,5 @@ def error(self):
     return nfs_get_error(self._nfs)
 
 def open(url, mode='r', codec=None):
-    return NFSFH(None, url, mode=mode, codec=codec)
+    return NFSFileHandle(None, url, mode=mode, codec=codec)
 

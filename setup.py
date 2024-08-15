@@ -34,10 +34,10 @@ cmdclass['build'] = Build
 
 name = 'libnfs'
 version = '1.0'
-release = '4'
+release = '1'
 versrel = version + '-' + release
 readme = 'README'
-download_url = "https://github.com/sahlberg/libnfs-python/libnfs-" + \
+download_url = "https://github.com/chrisagrams/libnfs-python" + \
                                                           versrel + ".tar.gz"
 with open(readme, "r") as f:
     long_description = f.read()
@@ -57,13 +57,13 @@ setup(name = name,
       long_description = long_description,
       license = 'LGPLv2.1',
       platforms = ['any'],
-      author = 'Ronnie Sahlberg',
-      author_email = 'ronniesahlberg@gmail.com',
-      url = 'https://github.com/sahlberg/libnfs-python/',
+      author = 'Chris Grams',
+      author_email = 'chrisagrams@gmail.com',
+      url = 'https://github.com/chrisagrams/libnfs-python',
       download_url = download_url,
       packages = ['libnfs'],
       classifiers = [
-          'Development Status :: 4 - Beta',
+          'Development Status :: 1 - Beta',
           'Intended Audience :: Developers',
           'Operating System :: OS Independent',
           'Programming Language :: C',

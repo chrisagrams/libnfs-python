@@ -1,0 +1,73 @@
+name: CI Build and Test
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up nfs-ganesha NFS server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nfs-ganesha nfs-ganesha-vfs
+          sudo mkdir -p /exports
+          sudo chmod -R 777 /exports
+          echo 'EXPORT { 
+            Export_Id = 1; 
+            Path = /exports; 
+            Pseudo = /exports; 
+            Access_Type = RW; 
+            Squash = No_Root_Squash; 
+            FSAL { Name = VFS; } 
+            CLIENT { Clients = *, Access_Type = RW; } 
+          }' | sudo tee /etc/ganesha/exports.conf
+          cat /etc/ganesha/exports.conf
+          sudo ganesha.nfsd -f /etc/ganesha/ganesha.conf -L /var/log/ganesha.log -N NIV_EVENT -NDEBUG
+
+      - name: Check Ganesha Logs
+        run: |
+          tail -n 50 /var/log/ganesha.log
+
+      - name: Verify nfs-ganesha NFS server is running
+        run: |
+          showmount -e 127.0.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Build Docker image
+        run: |
+          docker build -t libnfs-python:latest -f- . <<EOF
+          FROM alpine:latest
+          RUN apk add --no-cache \
+              swig \
+              python3 \
+              python3-dev \
+              py3-pip \
+              py3-setuptools \
+              build-base \
+              libnfs \
+              libnfs-dev \
+              sudo
+          COPY . /app
+          WORKDIR /app/libnfs
+          RUN make
+          WORKDIR /app
+          RUN sudo python3 setup.py install
+          CMD ["python3", "-m", "unittest", "discover", "-s", "tests"]
+          EOF
+
+      - name: Test against NFS server
+        run: |
+          docker run --network host --rm -e NFS_SERVER_IP=127.0.0.1 libnfs-python:latest python3 -m unittest tests/test_nfs.py

@@ -1,7 +1,7 @@
 CFLAGS     = -O2
 INCLUDE    = -I/usr/include
 LIBS       = -L/usr/lib -lnfs
-PYVER = 3.8
+PYVER = 3
 
 all: _libnfs.so
 
